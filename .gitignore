@@ -1,0 +1,26 @@
+# Virtual environments
+basic/basic-env/
+
+# Data files
+basic/data/
+basic/MNIST/
+
+# Large model files and checkpoints
+deploy/my-lora-model.gguf
+deploy/merged-model/
+deploy/my-model/
+
+# Third-party repos
+deploy/llama.cpp/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Python
+__pycache__/
+*.pyc
+
+# Environment / secrets
+.env
+*.key
+*.pem

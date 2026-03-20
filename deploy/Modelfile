@@ -1,0 +1,4 @@
+FROM ./my-lora-model.gguf
+PARAMETER temperature 0.7
+PARAMETER stop "<|eot_id|>"
+PARAMETER stop "<|end_of_text|>"
