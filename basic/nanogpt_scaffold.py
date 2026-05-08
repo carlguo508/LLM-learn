@@ -101,30 +101,40 @@ def get_batch(split):
 # Checkpoint 1.5: FFN + Block (with pre-norm + residual)
 # Checkpoint 1.6: stack N blocks, final LayerNorm, LM head
 #
-# forward(idx, targets=None) should:
-#   - take idx of shape (B, T)
-#   - return (logits, loss)
-#     logits: (B, T, vocab_size)
-#     loss:   scalar if targets is given, else None
-#
-# generate(idx, max_new_tokens) should:
-#   - take idx of shape (B, T_start)
-#   - autoregressively append max_new_tokens tokens
-#   - return idx of shape (B, T_start + max_new_tokens)
-#   - (Stage 1 version: re-run the full context every step. Naive on purpose.)
 
 class GPT(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
-        # TODO Checkpoint 1.2: define token + position embeddings
+        self.token_embedding_table = nn.Embedding(cfg.vocab_size, cfg.d_model)
+        self.position_embedding_table = nn.Embedding(cfg.block_size, cfg.d_model)
         # TODO Checkpoint 1.6: define the stack of blocks, final ln, lm_head
-        raise NotImplementedError("Start with Checkpoint 1.2")
 
+    # forward: for training
+    # forward(idx, targets=None) should:
+    #   - take idx of shape (B, T)
+    #   - return (logits, loss)
+    #     logits: (B, T, vocab_size)
+    #     loss:   scalar if targets is given, else None
     def forward(self, idx, targets=None):
         # TODO: shape flow (B, T) -> (B, T, d_model) -> ... -> (B, T, vocab_size)
-        raise NotImplementedError
+        B, T = idx.shape
+        # (B, T, d_model)
+        tok_emb = self.token_embedding_table(idx)
+        # [0, T - 1]
+        position_idx = torch.arange(T, device=idx.device)
+        # (T, d_model)
+        pos_emb = self.position_embedding_table(position_idx)
+        # (B, T, d_model)
+        x = tok_emb + pos_emb
+        return x, None
 
+    # generate: for inference
+    # generate(idx, max_new_tokens) should:
+    #   - take idx of shape (B, T_start)
+    #   - autoregressively append max_new_tokens tokens
+    #   - return idx of shape (B, T_start + max_new_tokens)
+    #   - (Stage 1 version: re-run the full context every step. Naive on purpose.)
     @torch.no_grad()
     def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
         # TODO Checkpoint 1.8
@@ -195,3 +205,8 @@ if __name__ == '__main__':
     # model = train()
     # context = torch.zeros((1, 1), dtype=torch.long, device=cfg.device)
     # print(decode(model.generate(context, max_new_tokens=500)[0].tolist()))
+    model = GPT(cfg).to(cfg.device)
+    x, y = get_batch('train')
+    out, _ = model(x)
+    print(out.shape)   # 期望: torch.Size([64, 256, 384])
+
