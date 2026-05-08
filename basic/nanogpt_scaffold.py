@@ -101,6 +101,28 @@ def get_batch(split):
 # Checkpoint 1.5: FFN + Block (with pre-norm + residual)
 # Checkpoint 1.6: stack N blocks, final LayerNorm, LM head
 #
+class Head(nn.Module):
+    def __init__(self, head_size):
+        super().__init__()
+        self.W_q = nn.Linear(cfg.d_model, head_size)
+        self.W_k = nn.Linear(cfg.d_model, head_size)
+        self.W_v = nn.Linear(cfg.d_model, head_size)
+        self.head_size = head_size
+        self.register_buffer('tril', torch.tril(torch.ones(cfg.block_size, cfg.block_size)))
+        self.dropout = nn.Dropout(cfg.dropout)
+        
+    def forward(self, x):  # x: (B, T, d_model)
+        B, T, _ = x.shape
+        Q = self.W_q(x) # Q: (B, T, head_size)
+        K = self.W_k(x) # K: (B, T, head_size)
+        V = self.W_v(x) # V: (B, T, head_size)
+        weight = Q @ K.transpose(-2, -1) * self.head_size **-0.5 # (B, T, T)
+        weight = weight.masked_fill(self.tril[:T, :T] == 0, float('-inf'))
+        weight = F.softmax(weight, dim=-1)
+        weight = self.dropout(weight)
+        out = weight @ V
+        return out
+        
 
 class GPT(nn.Module):
     def __init__(self, cfg):
@@ -108,6 +130,7 @@ class GPT(nn.Module):
         self.cfg = cfg
         self.token_embedding_table = nn.Embedding(cfg.vocab_size, cfg.d_model)
         self.position_embedding_table = nn.Embedding(cfg.block_size, cfg.d_model)
+        self.sa_head = Head(cfg.d_model)
         # TODO Checkpoint 1.6: define the stack of blocks, final ln, lm_head
 
     # forward: for training
@@ -127,6 +150,7 @@ class GPT(nn.Module):
         pos_emb = self.position_embedding_table(position_idx)
         # (B, T, d_model)
         x = tok_emb + pos_emb
+        x = self.sa_head(x)
         return x, None
 
     # generate: for inference
