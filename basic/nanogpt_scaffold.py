@@ -101,6 +101,24 @@ def get_batch(split):
 # Checkpoint 1.5: FFN + Block (with pre-norm + residual)
 # Checkpoint 1.6: stack N blocks, final LayerNorm, LM head
 #
+
+class MultiHeadAttention(nn.Module):
+    def __init__(self, n_head, head_size):
+        super().__init__()
+        # nn.ModuleList，里面装 n_head 个 Head(head_size)
+        self.heads = nn.ModuleList([Head(head_size) for _ in range(n_head)])
+        self.proj = nn.Linear(n_head * head_size, cfg.d_model)
+        self.dropout = nn.Dropout(cfg.dropout)
+
+    def forward(self, x):
+        # 让每个 head 都对 x 做 forward，结果 cat 起来
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
+        # 过 proj
+        out = self.proj(out)
+        # 过 dropout
+        out = self.dropout(out)
+        return out
+
 class Head(nn.Module):
     def __init__(self, head_size):
         super().__init__()
@@ -130,7 +148,7 @@ class GPT(nn.Module):
         self.cfg = cfg
         self.token_embedding_table = nn.Embedding(cfg.vocab_size, cfg.d_model)
         self.position_embedding_table = nn.Embedding(cfg.block_size, cfg.d_model)
-        self.sa_head = Head(cfg.d_model)
+        self.sa= MultiHeadAttention(cfg.n_head, cfg.d_model // cfg.n_head)
         # TODO Checkpoint 1.6: define the stack of blocks, final ln, lm_head
 
     # forward: for training
@@ -140,7 +158,7 @@ class GPT(nn.Module):
     #     logits: (B, T, vocab_size)
     #     loss:   scalar if targets is given, else None
     def forward(self, idx, targets=None):
-        # TODO: shape flow (B, T) -> (B, T, d_model) -> ... -> (B, T, vocab_size)
+        # shape flow (B, T) -> (B, T, d_model) -> ... -> (B, T, vocab_size)
         B, T = idx.shape
         # (B, T, d_model)
         tok_emb = self.token_embedding_table(idx)
@@ -150,7 +168,7 @@ class GPT(nn.Module):
         pos_emb = self.position_embedding_table(position_idx)
         # (B, T, d_model)
         x = tok_emb + pos_emb
-        x = self.sa_head(x)
+        x = self.sa(x)
         return x, None
 
     # generate: for inference
