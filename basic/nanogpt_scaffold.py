@@ -224,8 +224,36 @@ class GPT(nn.Module):
     #   - (Stage 1 version: re-run the full context every step. Naive on purpose.)
     @torch.no_grad()
     def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
-        # TODO Checkpoint 1.8
-        raise NotImplementedError
+        # idx: (B, T_start)
+        for _ in range(max_new_tokens):
+            # 1. 截断到最多 block_size
+            idx_cond = idx[:, -self.cfg.block_size:]
+            
+            # 2. forward，丢掉 loss
+            logits, _ = self(idx_cond)
+            
+            # 3. 只取最后一个位置
+            logits = logits[:, -1, :]            # (B, vocab_size)
+            
+            # 4. 应用 temperature
+            logits = logits / temperature
+            
+            # 5. (可选) top_k 过滤
+            if top_k is not None:
+                v, _ = torch.topk(logits, top_k)
+                logits[logits < v[:, [-1]]] = float('-inf')
+            
+            # 6. softmax → 概率
+            probs = F.softmax(logits, dim=-1)
+            
+            # 7. 采样一个 token
+            idx_next = torch.multinomial(probs, num_samples=1)   # (B, 1)
+            
+            # 8. 拼到 idx 后面
+            idx = torch.cat([idx, idx_next], dim=1)
+        
+        return idx
+
 
 
 # =====================================================================
@@ -291,7 +319,7 @@ if __name__ == '__main__':
     print(repr(decode(x[0, :100].tolist())))
 
     # Once you've implemented GPT, uncomment:
-    model = train()
+    # model = train()
     # context = torch.zeros((1, 1), dtype=torch.long, device=cfg.device)
     # print(decode(model.generate(context, max_new_tokens=500)[0].tolist()))
 
