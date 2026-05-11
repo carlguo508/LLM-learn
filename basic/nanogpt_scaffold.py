@@ -33,7 +33,12 @@ class Config:
     eval_interval = 500
     eval_iters = 200
     learning_rate = 3e-4
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    if torch.cuda.is_available():
+        device = 'cuda'
+    elif torch.backends.mps.is_available():
+        device = 'mps'
+    else:
+        device = 'cpu'
 
     # repro
     seed = 1337
@@ -41,6 +46,7 @@ class Config:
 
 cfg = Config()
 torch.manual_seed(cfg.seed)
+print(f"Using device: {cfg.device}")
 
 
 # =====================================================================
@@ -141,6 +147,33 @@ class Head(nn.Module):
         out = weight @ V
         return out
         
+class FeedForward(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.gelu = nn.GELU()
+        self.fc = nn.Linear(cfg.d_model, 4 * cfg.d_model)
+        self.proj = nn.Linear(4 * cfg.d_model, cfg.d_model)
+        self.dropout = nn.Dropout(cfg.dropout)
+    
+    def forward(self, x):
+        x = self.fc(x)
+        x = self.gelu(x)
+        x = self.proj(x)
+        x = self.dropout(x)
+        return x
+    
+class Block(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.ln1 = nn.LayerNorm(cfg.d_model)
+        self.sa  = MultiHeadAttention(cfg.n_head, cfg.d_model // cfg.n_head)
+        self.ln2 = nn.LayerNorm(cfg.d_model)
+        self.ffn = FeedForward(cfg)
+
+    def forward(self, x):
+        x = x + self.sa(self.ln1(x))      # 注意 + ：残差连接
+        x = x + self.ffn(self.ln2(x))
+        return x
 
 class GPT(nn.Module):
     def __init__(self, cfg):
@@ -148,8 +181,11 @@ class GPT(nn.Module):
         self.cfg = cfg
         self.token_embedding_table = nn.Embedding(cfg.vocab_size, cfg.d_model)
         self.position_embedding_table = nn.Embedding(cfg.block_size, cfg.d_model)
-        self.sa= MultiHeadAttention(cfg.n_head, cfg.d_model // cfg.n_head)
-        # TODO Checkpoint 1.6: define the stack of blocks, final ln, lm_head
+        # Checkpoint 1.6: define the stack of blocks, final ln, lm_head
+        self.blocks = nn.ModuleList([Block(cfg) for _ in range(cfg.n_layer)])
+        self.ln = nn.LayerNorm(cfg.d_model)
+        self.lm_head = nn.Linear(cfg.d_model, cfg.vocab_size)
+        
 
     # forward: for training
     # forward(idx, targets=None) should:
@@ -168,8 +204,17 @@ class GPT(nn.Module):
         pos_emb = self.position_embedding_table(position_idx)
         # (B, T, d_model)
         x = tok_emb + pos_emb
-        x = self.sa(x)
-        return x, None
+        for block in self.blocks:
+            x = block(x)
+        x = self.ln(x)  # final LayerNorm
+        logits = self.lm_head(x) # (B, T, vocab_size)
+        
+        loss = None
+        if targets is not None:
+            B, T, V = logits.shape
+            loss = F.cross_entropy(logits.view(B*T, V), targets.view(B*T))
+        
+        return logits, loss
 
     # generate: for inference
     # generate(idx, max_new_tokens) should:
@@ -217,6 +262,8 @@ def train():
 
         x, y = get_batch('train')
         _, loss = model(x, y)
+        if step % 100 == 0:
+            print(f"step {step}: loss {loss.item():.4f}")
 
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
@@ -244,11 +291,7 @@ if __name__ == '__main__':
     print(repr(decode(x[0, :100].tolist())))
 
     # Once you've implemented GPT, uncomment:
-    # model = train()
+    model = train()
     # context = torch.zeros((1, 1), dtype=torch.long, device=cfg.device)
     # print(decode(model.generate(context, max_new_tokens=500)[0].tolist()))
-    model = GPT(cfg).to(cfg.device)
-    x, y = get_batch('train')
-    out, _ = model(x)
-    print(out.shape)   # 期望: torch.Size([64, 256, 384])
 
